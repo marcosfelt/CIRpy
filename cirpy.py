@@ -14,6 +14,7 @@ import inspect
 import logging
 import os
 
+import aiohttp
 try:
     from urllib.error import HTTPError
     from urllib.parse import quote, urlencode
@@ -76,10 +77,10 @@ def construct_api_url(input, representation, resolvers=None, get3d=False, tautom
         url += '?%s' % urlencode(kwargs)
     return url
 
-
-def request(input, representation, resolvers=None, get3d=False, tautomers=False, **kwargs):
+async def request(session, input, representation, resolvers=None, get3d=False, tautomers=False, **kwargs):
     """Make a request to CIR and return the XML response.
 
+    :param aiohttp.ClientSession() session: Aiohttp session 
     :param string input: Chemical identifier to resolve
     :param string representation: Desired output representation
     :param list(string) resolvers: (Optional) Ordered list of resolvers to use
@@ -92,9 +93,11 @@ def request(input, representation, resolvers=None, get3d=False, tautomers=False,
     """
     url = construct_api_url(input, representation, resolvers, get3d, tautomers, **kwargs)
     log.debug('Making request: %s', url)
-    response = urlopen(url)
-    return etree.parse(response).getroot()
-
+    async with session.get(url) as resp:
+        response = await resp.text()
+    feed = etree.fromstring(response.encode('ascii'))
+    tree = etree.ElementTree(feed)
+    return tree.getroot()
 
 class Result(object):
     """A single result returned by CIR."""
@@ -146,9 +149,10 @@ class Result(object):
         return self.__dict__
 
 
-def query(input, representation, resolvers=None, get3d=False, tautomers=False, **kwargs):
+async def query(session, input, representation, resolvers=None, get3d=False, tautomers=False, **kwargs):
     """Get all results for resolving input to the specified output representation.
 
+    :param aiohttp.ClientSession() session: Aiohttp session 
     :param string input: Chemical identifier to resolve
     :param string representation: Desired output representation
     :param list(string) resolvers: (Optional) Ordered list of resolvers to use
@@ -159,7 +163,7 @@ def query(input, representation, resolvers=None, get3d=False, tautomers=False, *
     :raises HTTPError: if CIR returns an error code
     :raises ParseError: if CIR response is uninterpretable
     """
-    tree = request(input, representation, resolvers, get3d, tautomers, **kwargs)
+    tree = await request(session, input, representation, resolvers, get3d, tautomers, **kwargs)
     results = []
     for data in tree.findall('.//data'):
         value = [item.text for item in data.findall('item')]
@@ -176,9 +180,10 @@ def query(input, representation, resolvers=None, get3d=False, tautomers=False, *
     return results
 
 
-def resolve(input, representation, resolvers=None, get3d=False, **kwargs):
+async def resolve(session, input, representation, resolvers=None, get3d=False, **kwargs):
     """Resolve input to the specified output representation.
 
+    :param aiohttp.ClientSession() session: Aiohttp session 
     :param string input: Chemical identifier to resolve
     :param string representation: Desired output representation
     :param list(string) resolvers: (Optional) Ordered list of resolvers to use
@@ -189,7 +194,7 @@ def resolve(input, representation, resolvers=None, get3d=False, **kwargs):
     :raises ParseError: if CIR response is uninterpretable
     """
     # Take first result from XML query
-    results = query(input, representation, resolvers, False, get3d, **kwargs)
+    results = await query(session, input, representation, resolvers, False, get3d, **kwargs)
     result = results[0].value if results else None
     return result
 
